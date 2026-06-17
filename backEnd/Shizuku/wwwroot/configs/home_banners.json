@@ -1,0 +1,26 @@
+[
+  {
+    "fId": 2,
+    "fSubtitle": "Organic Linen Wear",
+    "fTitle": "\u81EA\u7136\u547C\u5438\uFF1A\u6975\u7C21\u65E5\u7CFB\u6D0B\u88DD",
+    "fDescription": "\u8F15\u76C8\u67D4\u548C\u7684\u5929\u7136\u4E9E\u9EBB\u526A\u88C1\uFF0C\u7D66\u60A8\u7121\u8CA0\u64D4\u7684\u6975\u81F4\u89AA\u819A\u89F8\u611F\u3002",
+    "fImage": "/img/shizuku_banner_grey.png",
+    "fSortOrder": 1
+  },
+  {
+    "fId": 1,
+    "fSubtitle": "2026 Autumn / Winter Collection",
+    "fTitle": "\u6EAB\u67D4\u6D41\u6DCC\u7684\u91DD\u7E54\u5149\u5F71",
+    "fDescription": "\u672C\u5B63\u7CBE\u9078\u5929\u7136\u5929\u7D72\u68C9\u8207\u7F8A\u6BDB\u6750\u8CEA\uFF0C\u6253\u9020\u8212\u9069\u8207\u98A8\u683C\u517C\u5177\u7684\u65E5\u5E38\u6696\u79CB\u7A7F\u642D\u3002",
+    "fImage": "/img/shizuku_banner_beige.png",
+    "fSortOrder": 3
+  },
+  {
+    "fId": 3,
+    "fSubtitle": "Aesthetic Modern Daily",
+    "fTitle": "\u79CB\u65E5\u7279\u60E0\uFF1A\u7CBE\u9078\u55AE\u54C1 85 \u6298\u8D77",
+    "fDescription": "\u5728\u79CB\u610F\u6F38\u6FC3\u7684\u6642\u7BC0\uFF0C\u70BA\u8863\u6AC3\u6DFB\u7F6E\u4E00\u4EF6\u6EAB\u6696\u7684\u65E5\u7CFB\u8CEA\u611F\u65E5\u5E38\u3002",
+    "fImage": "https://images.unsplash.com/photo-1509631179647-0177331693ae?q=80\u0026w=1600\u0026auto=format\u0026fit=crop",
+    "fSortOrder": 2
+  }
+]

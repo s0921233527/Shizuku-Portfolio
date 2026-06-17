@@ -1,0 +1,1083 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Shizuku.Models;
+using Shizuku.ViewModels;
+using Shizuku.DTOs;
+
+namespace Shizuku.Services
+{
+    public class ProductService
+    {
+        private readonly DbShizukuDemoContext _context;
+        private readonly IWebHostEnvironment _env;
+
+        public ProductService(DbShizukuDemoContext context, IWebHostEnvironment env)
+        {
+            _context = context;
+            _env = env;
+        }
+
+        /// <summary>取得商品列表，支援關鍵字搜尋（商品名稱或貨號）</summary>
+        public List<ProductListDto> GetProductList(string keyword, int? categoryId = null, bool isAdmin = false)//,bool isAdmin = false
+        {
+            var query = isAdmin
+       ? _context.TProducts.Where(p => p.FStatus != 0)   // 後台：顯示全部（除刪除）
+       : _context.TProducts.Where(p => p.FStatus == 1);  // 前台：只顯示上架
+
+            //= isAdmin
+            query = query.OrderByDescending(p => p.FCreatedAt);
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                query = query.Where(p =>
+                    p.FName.Contains(keyword) ||
+                    p.FProduct.Contains(keyword));
+            }
+            // 加上分類篩選
+            if (categoryId.HasValue)
+            {
+                query = query.Where(p => p.FCategoryId == categoryId.Value);
+            }
+
+            return query.Select(p => new ProductListDto
+            {
+                fId = p.FId,
+                fName = p.FName,
+                fProduct = p.FProduct,
+                fPrice = p.FPrice,
+                fStatus = (byte)p.FStatus,
+
+                fMinPrice = _context.TProductVariants
+                .Where(v => v.FProductId == p.FId && v.FPrice != null)
+                .Select(v => v.FPrice)
+                .OrderBy(v => v)
+                .FirstOrDefault() ?? p.FPrice,
+                fImage = _context.TProductImages
+                    .Where(img => img.FProductId == p.FId)
+                    .OrderByDescending(img => img.FIsMain)
+                    .Select(img => img.FImageUrl)
+                    .FirstOrDefault(),
+
+                Variants = _context.TProductVariants
+                    .Where(v => v.FProductId == p.FId)
+                    .Select(v => new VariantSummaryDto
+                    {
+                        fId = v.FId,
+                        fColor = _context.TProductColors
+                            .Where(c => c.FId == v.FColorId)
+                            .Select(c => c.FName)
+                            .FirstOrDefault() ?? "無顏色",
+
+                        fSize = _context.TProductSizes
+                            .Where(s => s.FId == v.FSizeId)
+                            .Select(s => s.FName)
+                            .FirstOrDefault() ?? "無尺寸",
+
+                        fStock = v.FStock,
+                        fPrice = v.FPrice
+                    }).ToList()
+
+            }).ToList();
+        }
+        //取得所有商品圖片
+        public List<string> GetProductImages(int productId)
+        {
+            return _context.TProductImages
+                .Where(img => img.FProductId == productId)
+                .OrderByDescending(img => img.FIsMain)
+                .ThenBy(img => img.FSortOrder)
+                .Select(img => img.FImageUrl)
+                .ToList();
+        }
+
+        /// <summary>軟刪除（將 fStatus 設為 0）</summary>
+        public bool SoftDelete(int id)
+        {
+            var product = _context.TProducts.FirstOrDefault(p => p.FId == id);
+
+            if (product == null) return false;
+
+            product.FStatus = 0;
+            _context.SaveChanges();
+            return true;
+        }
+
+        /// <summary>依 ID 取得編輯用 DTO；找不到回傳 null</summary>
+        public ProductEditDto GetForEdit(int id)
+        {
+            var product = _context.TProducts.FirstOrDefault(p => p.FId == id);
+
+            if (product == null) return null;
+
+            return new ProductEditDto
+            {
+                fId = product.FId,
+                fName = product.FName,
+                fProduct = product.FProduct,
+                fPrice = product.FPrice,
+                fCategoryId = product.FCategoryId,
+                fDescription = product.FDescription,
+                fStatus = (byte)product.FStatus,
+                // 同時撈出目前主圖路徑
+                fImage = _context.TProductImages
+                    .Where(img => img.FProductId == product.FId && img.FIsMain == 1)
+                    .Select(img => img.FImageUrl)
+                    .FirstOrDefault()
+
+            };
+        }
+
+        /// <summary>取得相關商品（同分類）</summary>
+        public List<ProductListDto> GetRelatedProducts(int productId)
+        {
+            var product = _context.TProducts.FirstOrDefault(p => p.FId == productId);
+            if (product == null) return new List<ProductListDto>();
+
+            return _context.TProducts
+                .Where(p => p.FCategoryId == product.FCategoryId
+                         && p.FId != productId
+                         && p.FStatus == 1)
+                .Take(6)
+                .Select(p => new ProductListDto
+                {
+                    fId = p.FId,
+                    fName = p.FName,
+                    fProduct = p.FProduct,
+                    fPrice = p.FPrice,
+                    fStatus = (byte)p.FStatus,
+                    fMinPrice = _context.TProductVariants
+                        .Where(v => v.FProductId == p.FId && v.FPrice != null)
+                        .Select(v => v.FPrice)
+                        .OrderBy(v => v)
+                        .FirstOrDefault() ?? p.FPrice,
+                    fImage = _context.TProductImages
+                        .Where(img => img.FProductId == p.FId && img.FIsMain == 1)
+                        .Select(img => img.FImageUrl)
+                        .FirstOrDefault()
+                }).ToList();
+        }
+
+        /// <summary>更新商品基本資料</summary>
+        public bool Update(ProductEditDto dto)
+        {
+            var product = _context.TProducts.FirstOrDefault(p => p.FId == dto.fId);
+
+            if (product == null) return false;
+
+            product.FName = dto.fName;
+            product.FProduct = dto.fProduct;
+            product.FPrice = dto.fPrice;
+            product.FStatus = dto.fStatus;
+            product.FCategoryId = dto.fCategoryId;
+            product.FDescription = dto.fDescription;
+
+            _context.SaveChanges();
+            return true;
+        }
+
+        /// <summary>建立新商品並自動產生貨號，同時新增一筆規格庫存</summary>
+        public int? Create(ProductCreateDto dto)
+        {
+            var category = _context.TProductCategories.Find(dto.fCategoryId);
+
+            // Guard: 分類不存在
+            if (category == null) return null;
+
+            // Guard: 沒有父分類則無法產生貨號前綴
+            if (string.IsNullOrEmpty(category.FParentId)) return null;
+
+            int parentId = int.Parse(category.FParentId);
+            var parent = _context.TProductCategories.Find(parentId);
+
+            if (parent == null) return null;
+
+            string prefix = parent.FCodePrefix + category.FCodePrefix;
+            string productCode = BuildProductCode(prefix);
+
+            var newProduct = new TProduct
+            {
+                FName = dto.fName,
+                FPrice = dto.fPrice,
+                FCategoryId = dto.fCategoryId,
+                FDescription = dto.fDescription,
+                FProduct = productCode,
+                FCreatedAt = DateTime.Now,
+                FStatus = dto.fStatus
+            };
+
+            _context.TProducts.Add(newProduct);
+            _context.SaveChanges();
+
+            foreach (var v in dto.Variants)
+            {
+                // Guard：顏色或尺寸沒選就跳過
+                if (v.fColorId == 0 || v.fSizeId == 0) continue;
+
+                var variant = new TProductVariant
+                {
+                    FProductId = newProduct.FId,
+                    FColorId = v.fColorId,
+                    FSizeId = v.fSizeId,
+                    FStock = v.fStock,
+                    FPrice = v.fPrice,
+                    FSkuCode = $"{productCode}-{v.fColorId}-{v.fSizeId}"
+                };
+
+                _context.Entry(variant).State = EntityState.Added;
+            }
+
+            _context.SaveChanges();
+            return newProduct.FId;
+        }
+
+        /// <summary>根據前綴自動計算下一個流水號貨號</summary>
+        private string BuildProductCode(string prefix)
+        {
+            var last = _context.TProducts
+                .Where(x => x.FProduct.StartsWith(prefix + "-"))
+                .OrderByDescending(x => x.FProduct)
+                .FirstOrDefault();
+
+            int nextNum = 1;
+
+            if (last != null)
+            {
+                string numStr = last.FProduct.Replace(prefix + "-", "");
+                if (int.TryParse(numStr, out int parsed))
+                    nextNum = parsed + 1;
+            }
+
+            return $"{prefix}-{nextNum:000}";
+        }
+        /// <summary>取得某商品的所有規格庫存（含顏色、尺寸名稱）</summary>
+        public List<VariantEditDto> GetVariants(int productId)
+        {
+            return _context.TProductVariants
+                .Where(v => v.FProductId == productId)
+                .Select(v => new VariantEditDto
+                {
+                    fId = v.FId,
+                    fStock = v.FStock,
+                    fSkuCode = v.FSkuCode,
+                    fPrice = v.FPrice,
+                    fColor = _context.TProductColors
+                        .Where(c => c.FId == v.FColorId)
+                        .Select(c => c.FName)
+                        .FirstOrDefault() ?? "無顏色",
+                    fSize = _context.TProductSizes
+                        .Where(s => s.FId == v.FSizeId)
+                        .Select(s => s.FName)
+                        .FirstOrDefault() ?? "無尺寸"
+                }).ToList();
+        }
+
+        /// <summary>批次更新規格庫存數量</summary>
+        public void UpdateVariantStocks(List<VariantEditDto> variants)
+        {
+            foreach (var dto in variants)
+            {
+                var variant = _context.TProductVariants.FirstOrDefault(v => v.FId == dto.fId);
+
+                if (variant == null) continue;
+
+                variant.FStock = dto.fStock;
+
+                // 
+                if (dto.fPrice.HasValue)
+                    variant.FPrice = dto.fPrice.Value;
+            }
+            _context.SaveChanges();
+        }
+
+        /// <summary>儲存上傳圖片並寫入 tProductImages，回傳圖片路徑</summary>
+        public async Task<string> SaveImageAsync(int productId, IFormFile photo)
+        {
+            if (photo == null || photo.Length == 0) return null;
+
+            string uploadsFolder = Path.Combine(_env.WebRootPath, "uploads", "products");
+            Directory.CreateDirectory(uploadsFolder);
+
+            string fileName = $"{productId}_{Guid.NewGuid()}{Path.GetExtension(photo.FileName)}";
+            string filePath = Path.Combine(uploadsFolder, fileName);
+            string imageUrl = $"/uploads/products/{fileName}";
+
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await photo.CopyToAsync(stream);
+            }
+
+            // 舊主圖降為非主圖
+            var oldMain = _context.TProductImages
+                .Where(img => img.FProductId == productId && img.FIsMain == 1)
+                .ToList();
+
+            oldMain.ForEach(img => img.FIsMain = 0);
+
+            // 新增主圖紀錄
+            _context.TProductImages.Add(new TProductImage
+            {
+                FProductId = productId,
+                FImageUrl = imageUrl,
+                FSortOrder = 1,
+                FIsMain = 1
+            });
+
+            _context.SaveChanges();
+            return imageUrl;
+        }
+        public async Task<string> SaveExtraImageAsync(int productId, IFormFile photo)
+        {
+            if (photo == null || photo.Length == 0) return null;
+
+            string uploadsFolder = Path.Combine(_env.WebRootPath, "uploads", "products");
+            Directory.CreateDirectory(uploadsFolder);
+            string fileName = $"{productId}_{Guid.NewGuid()}{Path.GetExtension(photo.FileName)}";
+            string filePath = Path.Combine(uploadsFolder, fileName);
+            string imageUrl = $"/uploads/products/{fileName}";
+
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await photo.CopyToAsync(stream);
+            }
+
+            // 不設主圖
+            _context.TProductImages.Add(new TProductImage
+            {
+                FProductId = productId,
+                FImageUrl = imageUrl,
+                FSortOrder = 2,
+                FIsMain = 0
+            });
+            _context.SaveChanges();
+
+            return imageUrl;
+        }
+        /// <summary>取得新增頁所需的下拉選單資料</summary>
+        public (List<object> categories, List<TProductColor> colors, List<TProductSize> sizes) GetDropdownData()
+        {
+            var categories = _context.TProductCategories
+                .Where(c => c.FParentId != null)
+                .ToList()
+                .Select(c => new
+                {
+                    fId = c.FId,
+                    fFullName = _context.TProductCategories
+                        .FirstOrDefault(p => p.FId.ToString() == c.FParentId)?.FName
+                        + "-" + c.FName
+                })
+                .ToList<object>();
+
+            var colors = _context.TProductColors.ToList();
+            var sizes = _context.TProductSizes.ToList();
+
+            return (categories, colors, sizes);
+        }
+        /// <summary>取得 Dashboard 統計數據（含真實銷售分析）</summary>
+        public ProductStatsDto GetStats()
+        {
+            var products = _context.TProducts.ToList();
+            var variants = _context.TProductVariants.ToList();
+
+            // 從訂單明細計算每個商品的銷售數量
+            var salesData = _context.TOrderDetails
+                .GroupBy(od => od.FVariantId)
+                .Select(g => new
+                {
+                    fVariantId = g.Key,
+                    fTotalSold = g.Sum(od => od.FQuantity),
+                    fTotalRevenue = g.Sum(od => od.FSubtotal)
+                }).ToList();
+
+            // 對應到商品
+            var productSales = variants
+                .GroupJoin(salesData,
+                    v => v.FId,
+                    s => s.fVariantId,
+                    (v, s) => new { v, sales = s.FirstOrDefault() })
+                .GroupBy(x => x.v.FProductId)
+                .Select(g => new ProductSalesDto
+                {
+                    fProductId = g.Key,
+                    fProductName = _context.TProducts
+                        .Where(p => p.FId == g.Key)
+                        .Select(p => p.FName)
+                        .FirstOrDefault() ?? "",
+                    fProduct = _context.TProducts
+                        .Where(p => p.FId == g.Key)
+                        .Select(p => p.FProduct)
+                        .FirstOrDefault() ?? "",
+                    fTotalSold = g.Sum(x => x.sales?.fTotalSold ?? 0),
+                    fTotalRevenue = g.Sum(x => x.sales?.fTotalRevenue ?? 0),
+                    fStatus = g.Sum(x => x.sales?.fTotalSold ?? 0) >= 100 ? "熱銷"
+                                  : g.Sum(x => x.sales?.fTotalSold ?? 0) >= 20 ? "普通"
+                                  : "滯銷"
+                })
+                .OrderByDescending(p => p.fTotalSold)
+                .ToList();
+
+            return new ProductStatsDto
+            {
+                fTotalProducts = products.Count(p => p.FStatus != 0),
+                fActiveProducts = products.Count(p => p.FStatus == 1),
+                fOfflineProducts = products.Count(p => p.FStatus == 2),
+                fTotalStock = variants.Sum(v => v.FStock),
+                fLowStockCount = variants.Count(v => v.FStock > 0 && v.FStock <= 5),
+                fSoldOutCount = variants.Count(v => v.FStock == 0),
+                fTotalRevenue = salesData.Sum(s => s.fTotalRevenue),
+                fHotProducts = productSales.Take(5).ToList(),
+                fSlowProducts = productSales
+                    .Where(p => p.fStatus == "滯銷")
+                    .TakeLast(5).ToList(),
+                fCategoryStats = _context.TProductCategories
+                    .Where(c => c.FParentId != null)
+                    .Select(c => new CategoryStatDto
+                    {
+                        fCategoryName = c.FName,
+                        fProductCount = _context.TProducts
+                            .Count(p => p.FCategoryId == c.FId && p.FStatus != 0)
+                    }).ToList()
+            };
+        }
+
+        /// <summary>取得所有商品規格庫存總覽</summary>
+        public List<InventoryProductDto> GetInventory()
+        {
+            var colorsMap = _context.TProductColors.ToDictionary(c => c.FId, c => c.FName);
+            var sizesMap = _context.TProductSizes.ToDictionary(s => s.FId, s => s.FName);
+
+            var products = _context.TProducts
+                .Where(p => p.FStatus != 0)
+                .Select(p => new
+                {
+                    p.FId,
+                    p.FName,
+                    p.FProduct,
+                    p.FPrice,
+                    MainImage = _context.TProductImages
+                        .Where(img => img.FProductId == p.FId && img.FIsMain == 1)
+                        .Select(img => img.FImageUrl)
+                        .FirstOrDefault(),
+                    Variants = _context.TProductVariants
+                        .Where(v => v.FProductId == p.FId)
+                        .Select(v => new
+                        {
+                            v.FId,
+                            v.FSkuCode,
+                            v.FColorId,
+                            v.FSizeId,
+                            v.FStock,
+                            v.FPrice,
+                            v.FCostPrice
+                        }).ToList()
+                }).ToList();
+
+            var result = products.Select(p =>
+            {
+                var variantDtos = p.Variants.Select(v => new InventoryVariantDto
+                {
+                    fVariantId = v.FId,
+                    fSkuCode = v.FSkuCode ?? "",
+                    fColor = colorsMap.TryGetValue(v.FColorId, out var colorName) ? colorName : "無顏色",
+                    fSize = sizesMap.TryGetValue(v.FSizeId, out var sizeName) ? sizeName : "無尺寸",
+                    fStock = v.FStock,
+                    fPrice = v.FPrice ?? p.FPrice,
+                    fCostPrice = v.FCostPrice,
+                    fStockStatus = v.FStock == 0 ? "售完"
+                        : v.FStock <= 5 ? "低庫存"
+                        : v.FStock <= 0 && !p.Variants.Any() ? "缺貨"
+                        : "正常"
+                }).ToList();
+
+                return new InventoryProductDto
+                {
+                    fProductId = p.FId,
+                    fProductName = p.FName,
+                    fProduct = p.FProduct ?? "",
+                    fImage = p.MainImage,
+                    fTotalStock = variantDtos.Sum(v => v.fStock),
+                    fVariants = variantDtos
+                };
+            }).ToList();
+
+            return result;
+        }
+        //進銷存報表
+        public List<InventoryProductDto> GetInventoryReport()
+        {
+            var colorsMap = _context.TProductColors.ToDictionary(c => c.FId, c => c.FName);
+            var sizesMap = _context.TProductSizes.ToDictionary(s => s.FId, s => s.FName);
+
+            var purchaseSums = _context.TPurchaseOrderDetails
+                .Join(_context.TPurchaseOrders,
+                    d => d.FOrderId,
+                    o => o.FId,
+                    (d, o) => new { d.FVariantId, d.FQuantity, o.FType })
+                .GroupBy(x => new { x.FVariantId, x.FType })
+                .Select(g => new
+                {
+                    g.Key.FVariantId,
+                    g.Key.FType,
+                    Sum = g.Sum(x => x.FQuantity)
+                })
+                .ToList();
+
+            var purchaseMap = purchaseSums
+                .GroupBy(x => x.FVariantId)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.ToDictionary(x => x.FType, x => x.Sum, StringComparer.OrdinalIgnoreCase)
+                );
+
+            var salesSums = _context.TOrderDetails
+                .Join(_context.TOrders.Where(o => o.FStatus != 5),
+                    d => d.FOrderId,
+                    o => o.FId,
+                    (d, o) => new { d.FVariantId, d.FQuantity })
+                .GroupBy(x => x.FVariantId)
+                .Select(g => new
+                {
+                    VariantId = g.Key,
+                    Sum = g.Sum(x => x.FQuantity)
+                })
+                .ToList()
+                .ToDictionary(x => x.VariantId, x => x.Sum);
+
+            var products = _context.TProducts
+                .Where(p => p.FStatus != 0)
+                .OrderByDescending(p => p.FCreatedAt)
+                .Select(p => new
+                {
+                    p.FId,
+                    p.FName,
+                    p.FProduct,
+                    MainImage = _context.TProductImages
+                        .Where(img => img.FProductId == p.FId && img.FIsMain == 1)
+                        .Select(img => img.FImageUrl)
+                        .FirstOrDefault(),
+                    Variants = _context.TProductVariants
+                        .Where(v => v.FProductId == p.FId)
+                        .Select(v => new
+                        {
+                            v.FId,
+                            v.FSkuCode,
+                            v.FColorId,
+                            v.FSizeId,
+                            v.FStock,
+                            v.FPrice,
+                            v.FCostPrice
+                        }).ToList()
+                }).ToList();
+
+            var result = products.Select(p =>
+            {
+                var variantDtos = p.Variants.Select(v =>
+                {
+                    int getPurchaseQty(string type)
+                    {
+                        if (purchaseMap.TryGetValue(v.FId, out var typesDict) && typesDict.TryGetValue(type, out var sum))
+                        {
+                            return sum;
+                        }
+                        return 0;
+                    }
+
+                    int salesQty = salesSums.TryGetValue(v.FId, out var sSum) ? sSum : 0;
+                    int purchaseQty = getPurchaseQty("進貨");
+                    int returnQty = getPurchaseQty("銷售退回");
+                    int purchaseReturnQty = getPurchaseQty("進貨退出");
+                    int scrapQty = getPurchaseQty("報廢");
+                    int adjustInQty = getPurchaseQty("調整進");
+                    int adjustOutQty = getPurchaseQty("調整出");
+
+                    var stockStatus = v.FStock == 0 ? "售完"
+                                   : v.FStock <= 5 ? "低庫存"
+                                   : "正常";
+
+                    return new InventoryVariantDto
+                    {
+                        fVariantId = v.FId,
+                        fSkuCode = v.FSkuCode ?? "",
+                        fColor = colorsMap.TryGetValue(v.FColorId, out var colorName) ? colorName : "",
+                        fSize = sizesMap.TryGetValue(v.FSizeId, out var sizeName) ? sizeName : "",
+                        fStock = v.FStock,
+                        fPrice = v.FPrice ?? 0,
+                        fCostPrice = v.FCostPrice ?? 0,
+                        fStockStatus = stockStatus,
+                        fPurchaseQty = purchaseQty,
+                        fSalesQty = salesQty,
+                        fReturnQty = returnQty,
+                        fPurchaseReturnQty = purchaseReturnQty,
+                        fScrapQty = scrapQty,
+                        fAdjustInQty = adjustInQty,
+                        fAdjustOutQty = adjustOutQty,
+                    };
+                }).ToList();
+
+                return new InventoryProductDto
+                {
+                    fProductId = p.FId,
+                    fProductName = p.FName,
+                    fProduct = p.FProduct ?? "",
+                    fImage = p.MainImage,
+                    fTotalStock = variantDtos.Sum(v => v.fStock),
+                    fVariants = variantDtos
+                };
+            }).ToList();
+
+            return result;
+        }
+
+        /// <summary>取得進貨紀錄</summary>
+        public List<StockRecordDto> GetStockRecords(int? variantId = null)
+        {
+            var details = _context.TPurchaseOrderDetails.AsQueryable();
+
+            if (variantId.HasValue)
+                details = details.Where(d => d.FVariantId == variantId.Value);
+
+            var result = details.ToList();
+
+            return result.Select(d =>
+            {
+                var order = _context.TPurchaseOrders.FirstOrDefault(o => o.FId == d.FOrderId);
+                var variant = _context.TProductVariants.FirstOrDefault(v => v.FId == d.FVariantId);
+                var product = variant != null ? _context.TProducts.FirstOrDefault(p => p.FId == variant.FProductId) : null;
+                var color = variant != null ? _context.TProductColors.FirstOrDefault(c => c.FId == variant.FColorId) : null;
+                var size = variant != null ? _context.TProductSizes.FirstOrDefault(s => s.FId == variant.FSizeId) : null;
+
+                return new StockRecordDto
+                {
+                    fId = d.FId,
+                    fVariantId = d.FVariantId,
+                    fQuantity = d.FQuantity,
+                    fCostPrice = d.FCostPrice,
+                    fType = order?.FType ?? "",
+                    fNote = order?.FNote ?? "",
+                    fCreatedAt = order?.FCreatedAt ?? DateTime.Now,
+                    fProductName = product?.FName ?? "",
+                    fColor = color?.FName ?? "",
+                    fSize = size?.FName ?? ""
+                };
+            })
+            .OrderByDescending(r => r.fCreatedAt)
+            .ToList();
+        }
+        /// <summary>新增進貨紀錄並更新庫存</summary>
+        public bool AddStockRecord(StockRecordCreateDto dto)
+        {
+            var variant = _context.TProductVariants.FirstOrDefault(v => v.FId == dto.fVariantId);
+            if (variant == null) return false;
+
+            // 新增進貨紀錄
+            _context.TProductStockRecords.Add(new TProductStockRecord
+            {
+                FVariantId = dto.fVariantId,
+                FType = dto.fType,
+                FQuantity = dto.fQuantity,
+                FCostPrice = dto.fCostPrice,
+                FNote = dto.fNote,
+                FCreatedAt = DateTime.Now
+            });
+
+            // 更新庫存
+            // 完整展開的寫法：新庫存 = 舊庫存 + 增加數量
+            variant.FStock = variant.FStock + dto.fQuantity;
+            // 更新成本價
+            if (dto.fCostPrice.HasValue)
+                variant.FCostPrice = dto.fCostPrice.Value;
+
+            _context.SaveChanges();
+            return true;
+        }
+        /// <summary>取得所有進貨單</summary>
+        public List<PurchaseOrderDto> GetPurchaseOrders()
+        {
+            return _context.TPurchaseOrders
+                .OrderByDescending(o => o.FCreatedAt)
+                .Select(o => new PurchaseOrderDto
+                {
+                    fId = o.FId,
+                    fOrderNo = o.FOrderNo,
+                    fSupplier = o.FSupplier,
+                    fPaymentMethod = o.FPaymentMethod,
+                    fType = o.FType,
+                    fStatus = o.FStatus,
+                    fInvoiceNo = o.FInvoiceNo,
+                    fInvoiceDate = o.FInvoiceDate,
+                    fTaxType = o.FTaxType,
+                    fUntaxedAmount = o.FUntaxedAmount,
+                    fTaxAmount = o.FTaxAmount,
+                    fNote = o.FNote,
+                    fTotalQuantity = o.FTotalQuantity,
+                    fTotalAmount = o.FTotalAmount,
+                    fItemCount = _context.TPurchaseOrderDetails
+                        .Count(d => d.FOrderId == o.FId),
+                    fCreatedAt = o.FCreatedAt
+                }).ToList();
+        }
+        /// <summary>取得進貨單詳細</summary>
+        public PurchaseOrderFullDto? GetPurchaseOrder(int id)
+        {
+            var order = _context.TPurchaseOrders.FirstOrDefault(o => o.FId == id);
+            if (order == null) return null;
+
+            var details = _context.TPurchaseOrderDetails
+                .Where(d => d.FOrderId == id)
+                .Select(d => new PurchaseOrderDetailDto
+                {
+                    fId = d.FId,
+                    fVariantId = d.FVariantId,
+                    fProductName = _context.TProducts
+                        .Where(p => p.FId == _context.TProductVariants
+                            .Where(v => v.FId == d.FVariantId)
+                            .Select(v => v.FProductId)
+                            .FirstOrDefault())
+                        .Select(p => p.FName)
+                        .FirstOrDefault() ?? "",
+                    fSkuCode = _context.TProductVariants
+                    .Where(v => v.FId == d.FVariantId)
+                    .Select(v => v.FSkuCode)
+                    .FirstOrDefault() ?? "",
+                    fColor = _context.TProductColors
+                        .Where(c => c.FId == _context.TProductVariants
+                            .Where(v => v.FId == d.FVariantId)
+                            .Select(v => v.FColorId)
+                            .FirstOrDefault())
+                        .Select(c => c.FName)
+                        .FirstOrDefault() ?? "",
+                    fSize = _context.TProductSizes
+                        .Where(s => s.FId == _context.TProductVariants
+                            .Where(v => v.FId == d.FVariantId)
+                            .Select(v => v.FSizeId)
+                            .FirstOrDefault())
+                        .Select(s => s.FName)
+                        .FirstOrDefault() ?? "",
+                    fQuantity = d.FQuantity,
+                    fCostPrice = d.FCostPrice,
+                    fAmount = d.FAmount,
+                    fNote = d.FNote
+                }).ToList();
+
+            return new PurchaseOrderFullDto
+            {
+                fId = order.FId,
+                fOrderNo = order.FOrderNo,
+                fSupplier = order.FSupplier,
+                fPaymentMethod = order.FPaymentMethod,
+                fNote = order.FNote,
+                fType = order.FType,          // ← 已加
+                fStatus = order.FStatus,        // ← 已加
+                fInvoiceNo = order.FInvoiceNo,     // ← 已加
+                fInvoiceDate = order.FInvoiceDate,   // ← 已加
+                fTaxType = order.FTaxType,       // ← 已加
+                fUntaxedAmount = order.FUntaxedAmount, // ← 已加
+                fTaxAmount = order.FTaxAmount,     // ← 已加
+                fTotalQuantity = order.FTotalQuantity,
+                fTotalAmount = order.FTotalAmount,
+                fCreatedAt = order.FCreatedAt,
+                fDetails = details
+            };
+        }
+
+        /// <summary>新增進貨單</summary>
+        public int CreatePurchaseOrder(PurchaseOrderCreateDto dto)
+        {
+            // 自動生成進貨單號 PO-YYYYMMDD-XXX
+            string dateStr = DateTime.Now.ToString("yyyyMMdd");
+            int todayCount = _context.TPurchaseOrders
+                .Count(o => o.FOrderNo.StartsWith($"PO-{dateStr}")) + 1;
+            string orderNo = $"PO-{dateStr}-{todayCount:D3}";
+
+            decimal untaxed = dto.fDetails.Sum(d => d.fQuantity * (d.fCostPrice ?? 0));
+            decimal taxAmt = dto.fTaxType == "應稅" ? Math.Round(untaxed * 0.05m, 0) : 0;
+            decimal total = untaxed + taxAmt;
+
+            var order = new TPurchaseOrder
+            {
+                FOrderNo = orderNo,
+                FSupplier = dto.fSupplier,
+                FPaymentMethod = dto.fPaymentMethod,
+                FType = dto.fType,          // ← 加
+                FStatus = dto.fStatus,        // ← 加
+                FInvoiceNo = dto.fInvoiceNo,     // ← 加
+                FInvoiceDate = dto.fInvoiceDate,   // ← 加
+                FTaxType = dto.fTaxType,       // ← 加
+                FTaxRate = dto.fTaxRate,       // ← 加
+                FUntaxedAmount = untaxed,            // ← 加
+                FTaxAmount = taxAmt,             // ← 加
+                FNote = dto.fNote,
+                FTotalQuantity = dto.fDetails.Sum(d => d.fQuantity),
+                FTotalAmount = total,// ← 改成含稅總計
+                FCreatedAt = DateTime.Now
+            };
+
+            _context.TPurchaseOrders.Add(order);
+            _context.SaveChanges();
+
+            foreach (var d in dto.fDetails)
+            {
+                _context.TPurchaseOrderDetails.Add(new TPurchaseOrderDetail
+                {
+                    FOrderId = order.FId,
+                    FVariantId = d.fVariantId,
+                    FQuantity = d.fQuantity,
+                    FCostPrice = d.fCostPrice,
+                    FAmount = d.fQuantity * (d.fCostPrice ?? 0),
+                    FNote = d.fNote
+                });
+
+                var variant = _context.TProductVariants
+           .FirstOrDefault(v => v.FId == d.fVariantId);
+                if (variant == null) continue;
+
+
+                if (dto.fStatus == "已完成")
+                {
+                    switch (dto.fType)
+                    {
+                        case "進貨":
+                        case "銷售退回":
+                        case "調整進":
+                            variant.FStock += d.fQuantity;
+                            break;
+                        case "退貨":
+                        case "進貨退出":
+                        case "報廢":
+                        case "調整出":
+                            variant.FStock -= d.fQuantity;
+                            break;
+                    }
+                }
+                if (d.fCostPrice.HasValue)
+                    variant.FCostPrice = d.fCostPrice.Value;
+            }
+
+            _context.SaveChanges();
+            return order.FId;
+        }
+
+        public bool UpdatePurchaseOrderStatus(int id, string status)
+        {
+            var order = _context.TPurchaseOrders.FirstOrDefault(o => o.FId == id);
+            if (order == null) return false;
+
+            var oldStatus = order.FStatus;
+            order.FStatus = status;
+
+            // 如果從未處理改成已完成，才更新庫存
+            if (oldStatus == "未處理" && status == "已完成")
+            {
+                var details = _context.TPurchaseOrderDetails.Where(d => d.FOrderId == id).ToList();
+                foreach (var d in details)
+                {
+                    var variant = _context.TProductVariants.FirstOrDefault(v => v.FId == d.FVariantId);
+                    if (variant == null) continue;
+
+                    switch (order.FType)
+                    {
+                        case "進貨":
+                        case "銷售退回":
+                        case "調整進":
+                            variant.FStock += d.FQuantity;
+                            break;
+                        case "退貨":
+                        case "進貨退出":
+                        case "報廢":
+                        case "調整出":
+                            variant.FStock -= d.FQuantity;
+                            break;
+                    }
+                }
+            }
+
+            _context.SaveChanges();
+            return true;
+        }
+
+        /// <summary>扣除庫存 (下單用 - 更新防超賣)</summary>
+        public async Task<bool> DeductStockAsync(int variantId, int quantity)
+        {
+            int affectedRows = await _context.TProductVariants
+                .Where(v => v.FId == variantId && v.FStock >= quantity)
+                .ExecuteUpdateAsync(s => s.SetProperty(v => v.FStock, v => v.FStock - quantity));
+
+            return affectedRows > 0;
+        }
+
+        /// <summary>回補庫存 (取消訂單用)</summary>
+        public async Task<bool> RestoreStockAsync(int variantId, int quantity)
+        {
+            var variant = await _context.TProductVariants.FindAsync(variantId);
+            if (variant == null) return false;
+            variant.FStock += quantity;
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        /// <summary>取得最新價格與庫存 (結帳預檢用)</summary>
+        public async Task<List<ProductCheckDto>> GetLatestInfoAsync(List<int> variantIds)
+        {
+            return await _context.TProductVariants
+            .Where(v => variantIds.Contains(v.FId))
+            .Select(v => new ProductCheckDto
+            {
+            VariantId = v.FId,
+            // 優先取規格價格，若無則取商品主表價格
+            LatestPrice = v.FPrice ?? v.TProduct.FPrice, 
+            CurrentStock = v.FStock,
+            ProductName = v.TProduct.FName
+            }).ToListAsync();
+        }
+        public void AddVariants(int productId, List<VariantInputDto> variants)
+        {
+            var product = _context.TProducts.Find(productId);
+            if (product == null) return;
+
+            foreach (var v in variants)
+            {
+                if (v.fColorId == 0 || v.fSizeId == 0) continue;
+                _context.TProductVariants.Add(new TProductVariant
+                {
+                    FProductId = productId,
+                    FColorId = v.fColorId,
+                    FSizeId = v.fSizeId,
+                    FStock = v.fStock,
+                    FPrice = v.fPrice,
+                    FSkuCode = $"{product.FProduct}-{v.fColorId}-{v.fSizeId}"
+                });
+            }
+            _context.SaveChanges();
+        }
+        public object? GetVariantBySku(string sku)
+        {
+            TProductVariant? variant = null;
+
+            // 先用 SKU 查
+            variant = _context.TProductVariants
+                .FirstOrDefault(v => v.FSkuCode == sku);
+
+            // 找不到再用 variantId 查
+            if (variant == null && int.TryParse(sku, out int id))
+                variant = _context.TProductVariants
+                    .FirstOrDefault(v => v.FId == id);
+
+            if (variant == null) return null;
+
+            var product = _context.TProducts.FirstOrDefault(p => p.FId == variant.FProductId);
+            var color = _context.TProductColors.FirstOrDefault(c => c.FId == variant.FColorId);
+            var size = _context.TProductSizes.FirstOrDefault(s => s.FId == variant.FSizeId);
+
+            return new
+            {
+                fVariantId = variant.FId,
+                fProductName = product?.FName ?? "",
+                fSkuCode = variant.FSkuCode,
+                fColor = color?.FName ?? "",
+                fSize = size?.FName ?? "",
+                fStock = variant.FStock
+            };
+        }
+
+        // 取得前台統計用銷量數據
+        public async Task<List<VariantSalesStatsDto>> GetSalesStatsAsync()
+        {
+            var stats = await (from od in _context.TOrderDetails
+                               join o in _context.TOrders on od.FOrderId equals o.FId
+                               join v in _context.TProductVariants on od.FVariantId equals v.FId
+                               join p in _context.TProducts on v.FProductId equals p.FId
+                               join c in _context.TProductColors on v.FColorId equals c.FId
+                               join s in _context.TProductSizes on v.FSizeId equals s.FId
+                               where o.FStatus != 5 // 排除取消的訂單
+                               group new { od, p, c, s } by new
+                               {
+                                   od.FVariantId,
+                                   p.FName,
+                                   p.FProduct,
+                                   ColorName = c.FName,
+                                   SizeName = s.FName
+                               }
+                               into g
+                               select new VariantSalesStatsDto
+                               {
+                                   VariantId = g.Key.FVariantId,
+                                   ProductName = g.Key.FName,
+                                   ProductCode = g.Key.FProduct,
+                                   Color = g.Key.ColorName,
+                                   Size = g.Key.SizeName,
+                                   TotalQuantitySold = g.Sum(x => x.od.FQuantity),
+                                   TotalRevenue = g.Sum(x => x.od.FSubtotal)
+                               })
+                               .OrderByDescending(x => x.TotalQuantitySold)
+                               .Take(10)
+                               .ToListAsync();
+
+            return stats;
+        }
+
+        // 取得前台首頁熱銷商品排行數據 (以商品為單位加總，且商品需處於上架狀態。不足 8 個時以最新商品補足至 8 個)
+        public async Task<List<ProductSalesStatsDto>> GetTopSellingProductsAsync()
+        {
+            var stats = await (from od in _context.TOrderDetails
+                               join v in _context.TProductVariants on od.FVariantId equals v.FId
+                               join p in _context.TProducts on v.FProductId equals p.FId
+                               join o in _context.TOrders on od.FOrderId equals o.FId
+                               where o.FStatus != 5 && p.FStatus == 1 // 排除取消訂單，且必須是上架狀態的商品
+                               group od by new { p.FId, p.FName, p.FPrice } into g
+                               select new ProductSalesStatsDto
+                               {
+                                   ProductId = g.Key.FId,
+                                   ProductName = g.Key.FName,
+                                   Price = g.Key.FPrice,
+                                   ImageUrl = _context.TProductImages
+                                       .Where(img => img.FProductId == g.Key.FId)
+                                       .OrderByDescending(img => img.FIsMain)
+                                       .ThenBy(img => img.FSortOrder)
+                                       .Select(img => img.FImageUrl)
+                                       .FirstOrDefault(),
+                                   TotalQuantitySold = g.Sum(x => x.FQuantity),
+                                   TotalRevenue = g.Sum(x => x.FSubtotal),
+                                   IsHot = true,
+                                   IsNew = false
+                               })
+                               .OrderByDescending(x => x.TotalQuantitySold)
+                               .Take(8)
+                               .ToListAsync();
+
+            if (stats.Count < 8)
+            {
+                var existingProductIds = stats.Select(s => s.ProductId).ToList();
+                int need = 8 - stats.Count;
+
+                var fallbackProducts = await _context.TProducts
+                    .Where(p => p.FStatus == 1 && !existingProductIds.Contains(p.FId))
+                    .OrderByDescending(p => p.FCreatedAt)
+                    .ThenByDescending(p => p.FId)
+                    .Take(need)
+                    .Select(p => new ProductSalesStatsDto
+                    {
+                        ProductId = p.FId,
+                        ProductName = p.FName,
+                        Price = p.FPrice,
+                        ImageUrl = _context.TProductImages
+                            .Where(img => img.FProductId == p.FId)
+                            .OrderByDescending(img => img.FIsMain)
+                            .ThenBy(img => img.FSortOrder)
+                            .Select(img => img.FImageUrl)
+                            .FirstOrDefault(),
+                        TotalQuantitySold = 0,
+                        TotalRevenue = 0,
+                        IsHot = false,
+                        IsNew = true
+                    })
+                    .ToListAsync();
+
+                stats.AddRange(fallbackProducts);
+            }
+
+            return stats;
+        }
+
+    }
+}

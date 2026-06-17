@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --font-size-xs: 0.875rem; /* 14px */
+  --font-size-sm: 1rem;     /* 16px */
+  --font-size-base: 1rem;   /* 16px */
+}
+
+/* 全域字體大小強制拉升，確保基本文字均為 16px */
+html, body {
+  font-size: 16px !important;
+}
+
+/* 確保 PrimeVue 元件也同步套用 16px 基底 */
+.p-component {
+  font-size: 1rem !important;
+}
+
+/* 行動端 Toast 位置與樣式優化 */
+@media (max-width: 768px) {
+  /* 針對行動端進行優化：將 Toast 調整至頂部水平置中，並向下偏移以避免擋住 Navbar 導覽列 */
+  .p-toast-top-right,
+  .p-toast-top-center,
+  .p-toast {
+    top: 85px !important;
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%) !important;
+    width: calc(100% - 2rem) !important;
+    max-width: 400px !important;
+  }
+}

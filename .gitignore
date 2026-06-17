@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+/FrontEnd/node_modules/
+/backEnd/Shizuku/bin/
+/backEnd/Shizuku/obj/
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+/backEnd/Shizuku/wwwroot/uploads/products/
+
+# IDE and Editor files
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Local environment files (containing actual secrets)
+*.local
+.env.local
+.env.*.local
+appsettings.Development.json
+appsettings.json
